@@ -1,0 +1,22 @@
+// Base build configuration for NovaPresence.
+//
+// ORDER MATTERS in xcconfig: definitions later in the file override
+// earlier ones, and an #include is inlined where it appears. So the
+// empty defaults come FIRST and the optional Secrets include comes
+// LAST — a filled Secrets.xcconfig overrides the defaults, and with no
+// Secrets.xcconfig at all the keys are simply empty, which is exactly
+// the app's "no-Zoom-keys" mode (standalone room; Zoom panel reports
+// keys not configured). Nothing in the repo ever contains a real key.
+//
+// To configure Zoom: copy Secrets.xcconfig.template to Secrets.xcconfig
+// (git-ignored) and fill it locally, or provide values in CI from
+// GitHub Secrets. Never commit a filled copy.
+
+// Defaults — empty / NO means "not configured".
+VIDEO_SDK_KEY =
+VIDEO_SDK_SECRET_PRESENT = NO
+MEETING_SDK_KEY =
+MEETING_SDK_SECRET_PRESENT = NO
+
+// Optional secrets (note the "?": absence is fine, not an error).
+#include? "Secrets.xcconfig"
