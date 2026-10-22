@@ -1,0 +1,90 @@
+# NovaPresence — XcodeGen project definition.
+#
+# WHY XcodeGen (chosen 2026-10-21, Phase 2):
+#   * There is no local Mac in this project. A hand-authored .xcodeproj is a
+#     directory of plists that is easy to corrupt without Xcode to validate it.
+#   * project.yml is plain text: reviewable, diffable, and reproducible.
+#     CI (and any future Mac) generates the identical .xcodeproj from this file
+#     with one command: `xcodegen generate`.
+#   * The generated .xcodeproj is a build artifact and is git-ignored.
+name: NovaPresence
+options:
+  bundleIdPrefix: com.aiworldmvp
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    # Unsigned CI builds override signing on the xcodebuild command line
+    # (CODE_SIGNING_ALLOWED=NO). These defaults keep local generation sane.
+    CODE_SIGNING_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+configs:
+  Debug: debug
+  Release: release
+targets:
+  NovaPresence:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/NovaPresence
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aiworldmvp.NovaPresence
+        INFOPLIST_FILE: Sources/NovaPresence/Info.plist
+        GENERATE_INFOPLIST_FILE: "NO"
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ENABLE_PREVIEWS: "YES"
+    info:
+      path: Sources/NovaPresence/Info.plist
+      properties:
+        CFBundleDisplayName: Nova Presence
+        CFBundleName: NovaPresence
+        UILaunchStoryboardName: ""
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # Permission prompts (wording shown to the Emperor on his iPhone).
+        NSCameraUsageDescription: "Nova uses the camera as her eyes for the room she is carried into, and as the vision-feed preview in this app."
+        NSMicrophoneUsageDescription: "Nova uses the microphone as her ears for the room she is carried into."
+        NSSpeechRecognitionUsageDescription: "Speech recognition turns what Nova hears into text she can read and answer. Recognition runs through Apple's Speech framework in this Phase-2 build."
+        # Zoom configuration is injected via xcconfig variables (see
+        # Config/Secrets.xcconfig.template). Only KEY NAMES live in the repo;
+        # empty values = the app builds and runs in no-Zoom-keys mode.
+        VideoSDKKey: $(VIDEO_SDK_KEY)
+        VideoSDKSecretPresent: $(VIDEO_SDK_SECRET_PRESENT)
+        MeetingSDKKey: $(MEETING_SDK_KEY)
+        MeetingSDKSecretPresent: $(MEETING_SDK_SECRET_PRESENT)
+  NovaPresenceTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/NovaPresenceTests
+    dependencies:
+      - target: NovaPresence
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aiworldmvp.NovaPresenceTests
+        GENERATE_INFOPLIST_FILE: "YES"
+schemes:
+  NovaPresence:
+    build:
+      targets:
+        NovaPresence: all
+    test:
+      targets:
+        - NovaPresenceTests
+    run:
+      config: Debug
+    archive:
+      config: Release
