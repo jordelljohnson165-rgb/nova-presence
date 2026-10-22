@@ -1,0 +1,171 @@
+name: Nova Presence — iOS build (unsigned)
+
+# Nova Presence Phase 2: build the iOS app on a cloud Mac — no local Mac.
+# Produces an UNSIGNED .app / .ipa artifact for sideloading onto the
+# Emperor's iPhone via AltStore / Sideloadly with his free Apple ID
+# (7-day provisioning; entering the Apple ID is his act, on his device).
+#
+# $0 LAW: this workflow uses only the GitHub-hosted runner free tier.
+# Keep the repository PUBLIC (public repos get free standard runners) or
+# keep builds lean — macOS minutes bill at 10x on private-repo free plans.
+
+"on":
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "**.swift"
+      - "project.yml"
+      - "Config/**"
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build NovaPresence (macos-15, Xcode 26, unsigned)
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: List installed Xcode versions (diagnostics)
+        run: |
+          echo "Installed Xcodes on this runner:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          echo "Default toolchain before selection:"
+          xcodebuild -version || true
+
+      # CRITICAL (verified in FREE-MACBOOK-HUNT.md §5): the macos-15 image
+      # carries Xcode 26.0.1–26.3 but DEFAULTS to Xcode 16.4. Selecting
+      # Xcode 26 explicitly is not optional — without this step the build
+      # silently uses the old toolchain and cannot target the iOS 26 SDK.
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          XCODE_APP=""
+          # Prefer the newest installed 26.x, e.g. Xcode_26.3.app / Xcode_26.app
+          for candidate in $(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -Vr); do
+            XCODE_APP="$candidate"
+            break
+          done
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode 26.x found on this macos-15 runner. Installed: $(ls -d /Applications/Xcode*.app 2>/dev/null | tr '\n' ' ')"
+            echo "::error::Do NOT fall back to Xcode 16 — Xcode 26 is required (macOS Sequoia 15.6+ SDK line). Re-run on a refreshed macos-15 image."
+            exit 1
+          fi
+          echo "Selecting $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          echo "DEVELOPER_DIR=$XCODE_APP/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Verify Xcode 26 (build fails if not 26.x)
+        run: |
+          set -euo pipefail
+          VERSION_LINE="$(xcodebuild -version | head -n 1)"
+          echo "Active toolchain: $VERSION_LINE"
+          xcrun swift --version
+          sw_vers
+          if ! echo "$VERSION_LINE" | grep -Eq '^Xcode 26\.'; then
+            echo "::error::Expected Xcode 26.x but the active toolchain is '$VERSION_LINE'. Failing on purpose — see the Select step above."
+            exit 1
+          fi
+          echo "Xcode 26 verified: $VERSION_LINE"
+
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          if command -v xcodegen >/dev/null 2>&1; then
+            xcodegen --version
+          else
+            brew install xcodegen
+          fi
+
+      - name: Generate the Xcode project from project.yml
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+          ls -la NovaPresence.xcodeproj
+
+      # This step is the ONLY place secrets are touched, and it touches
+      # only their EXISTENCE (true/false) — never their values. With no
+      # secrets configured the build proceeds in no-Zoom-keys mode: the
+      # app builds with empty Zoom keys and runs standalone.
+      # When ZOOM_VIDEO_SDK_* secrets exist later, this is also where an
+      # SDK-vendoring step activates (downloading the XCFramework from a
+      # secrets-authenticated location into Frameworks/ — not yet wired,
+      # because the SDK comes from the Emperor's Video SDK account).
+      - name: Report Zoom configuration (presence only, never values)
+        env:
+          HAS_VIDEO_KEY: ${{ secrets.ZOOM_VIDEO_SDK_KEY != '' }}
+          HAS_VIDEO_SECRET: ${{ secrets.ZOOM_VIDEO_SDK_SECRET != '' }}
+          HAS_MEETING_KEY: ${{ secrets.ZOOM_MEETING_SDK_KEY != '' }}
+          HAS_MEETING_SECRET: ${{ secrets.ZOOM_MEETING_SDK_SECRET != '' }}
+        run: |
+          echo "Zoom Video SDK key present:    $HAS_VIDEO_KEY"
+          echo "Zoom Video SDK secret present: $HAS_VIDEO_SECRET"
+          echo "Zoom Meeting SDK key present:    $HAS_MEETING_KEY"
+          echo "Zoom Meeting SDK secret present: $HAS_MEETING_SECRET"
+          if [ "$HAS_VIDEO_KEY" != "true" ] && [ "$HAS_MEETING_KEY" != "true" ]; then
+            echo "::notice::No Zoom secrets configured — building in NO-ZOOM-KEYS mode (standalone avatar room; ears/mouth/eyes on device). This is the expected Phase-2 first-run mode."
+          else
+            echo "::notice::Zoom secrets detected. NOTE: Phase-2 code integrates up to the SDK boundary (SDK binaries are not vendored yet), so keys alone do not enable Zoom joins yet. Secrets are never embedded in the app bundle."
+          fi
+
+      - name: Build NovaPresence (unsigned, device SDK)
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          xcodebuild build \
+            -project NovaPresence.xcodeproj \
+            -scheme NovaPresence \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            2>&1 | tee build.log
+
+      - name: Package the unsigned .ipa and .app
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find DerivedData/Build/Products -maxdepth 2 -name 'NovaPresence.app' -type d | head -n 1)"
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::Build reported success but NovaPresence.app was not found under DerivedData/Build/Products. Cannot package."
+            ls -R DerivedData/Build/Products || true
+            exit 1
+          fi
+          echo "Packaging $APP_PATH"
+          mkdir -p Payload staging
+          cp -R "$APP_PATH" Payload/
+          # An .ipa is a zip with a Payload/ folder. This one is UNSIGNED:
+          # AltStore / Sideloadly will sign it with the Emperor's free
+          # Apple ID at sideload time (7-day provisioning).
+          zip -qry NovaPresence-unsigned.ipa Payload
+          cp -R "$APP_PATH" staging/
+          zip -qry NovaPresence-app.zip staging/NovaPresence.app
+          ls -lh NovaPresence-unsigned.ipa NovaPresence-app.zip
+
+      - name: Upload the unsigned build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NovaPresence-unsigned
+          path: |
+            NovaPresence-unsigned.ipa
+            NovaPresence-app.zip
+            build.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload the build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NovaPresence-build-failure-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 14
